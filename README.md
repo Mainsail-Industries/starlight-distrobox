@@ -105,6 +105,42 @@ cd ~/ansible-coco
 ansible-playbook -i inventory.ini verify_coco.yaml
 ```
 
+## Successfull Output
+
+`` `bash
+[INFO] Verifying Dell OpenManage collection...
+dellemc.openmanage                       9.12.3
+dellemc.openmanage                       10.0.1
+[INFO] Setup complete!
+[INFO] Ansible and Dell iDRAC modules installed successfully
+[INFO] Creating Ansible playbooks for confidential computing setup...
+[INFO] Ansible playbooks created in /var/home/starlight/ansible-coco
+[INFO] Setup complete! Here's how to use your new distrobox:
+
+1. Configure iDRAC credentials:
+   Edit /var/home/starlight/ansible-coco/inventory.ini
+   Add your Dell iDRAC IP addresses and credentials
+
+2. Enter the distrobox:
+   distrobox enter fedora-coco-ansible
+
+3. Configure BIOS for confidential computing:
+   cd /var/home/starlight/ansible-coco
+   ansible-playbook -i inventory.ini configure_coco.yaml
+
+4. Reboot the server:
+   sudo reboot
+
+5. After reboot, verify confidential computing:
+   ./setup-coco-distrobox.sh verify
+   OR: ansible-playbook -i inventory.ini verify_coco.yaml
+
+starlight * fedora ~/starlight-distrobox-main took 9m21s
+❯ distrobox enter fedora-coco-ansible
+📦[starlight@fedora-coco-ansible]~/starlight-distrobox-main
+```
+
+
 ## Generated Files
 
 The script creates the following files in `~/ansible-coco/`:
