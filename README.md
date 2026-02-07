@@ -107,7 +107,7 @@ ansible-playbook -i inventory.ini verify_coco.yaml
 
 ## Successfull Output
 
-`` `bash
+```bash
 [INFO] Verifying Dell OpenManage collection...
 dellemc.openmanage                       9.12.3
 dellemc.openmanage                       10.0.1
