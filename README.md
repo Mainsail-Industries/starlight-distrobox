@@ -1,23 +1,24 @@
-# Fedora 43 Distrobox for Confidential Computing Configuration
+# Fedora 43 Distrobox for Confidential Computing Verification
 
-A comprehensive bash script that creates a Fedora 43 distrobox with Ansible and Dell iDRAC modules to configure Intel TDX or AMD SEV-SNP confidential computing on Dell servers.
+A comprehensive bash script that creates a Fedora 43 distrobox with Ansible and Dell iDRAC modules to verify Intel TDX or AMD SEV-SNP confidential computing on Dell servers.
 
 ## Overview
 
 This solution automatically:
 - Creates a Fedora 43 distrobox with systemd support
 - Installs Ansible and Dell OpenManage modules
-- Generates Ansible playbooks for confidential computing configuration
+- Generates Ansible playbooks for confidential computing detection and verification
 - Auto-detects Intel vs AMD CPUs
-- Configures appropriate confidential computing technology (TDX or SEV-SNP)
-- Reboots the system and provides verification tools
+- Verifies confidential computing configuration (TDX or SEV-SNP)
+- Provides tools to query Dell iDRAC for BIOS settings
 
 ## Requirements
 
 - distrobox installed on the host system
 - podman or docker as the container runtime
 - Dell server with Intel or AMD CPU that supports confidential computing
-- Root/sudo access for BIOS configuration and system reboot
+- Root/sudo access for verification commands
+- Host system must already have kernel parameters configured for confidential computing
 
 ## Installation & Setup
 
@@ -36,9 +37,9 @@ This will:
 - Install the `dellemc.openmanage` Ansible collection
 - Generate Ansible playbooks in `~/ansible-coco/`
 
-### Step 2: Configure Confidential Computing
+### Step 2: Detect CPU Type
 
-Enter the distrobox and run the configuration playbook:
+Enter the distrobox and run the detection playbook:
 
 ```bash
 distrobox enter fedora-coco-ansible
@@ -48,13 +49,12 @@ ansible-playbook -i inventory.ini configure_coco.yaml
 
 The playbook will:
 - Detect your CPU vendor (Intel or AMD)
-- Configure appropriate kernel parameters
-- Update GRUB configuration
-- Automatically reboot the system
+- Display CPU information
+- Optionally query Dell iDRAC for BIOS settings (if configured)
 
 ### Step 3: Verify Configuration
 
-After the system reboots, verify that confidential computing is enabled:
+Verify that confidential computing is enabled:
 
 **Option A: From the host**
 ```bash
@@ -75,11 +75,9 @@ The script creates the following files in `~/ansible-coco/`:
 ### 1. `configure_coco.yaml`
 Main Ansible playbook that:
 - Auto-detects Intel vs AMD CPU from `/proc/cpuinfo`
-- Configures Intel TDX with kernel parameters: `intel_iommu=on tdx_host=on`
-- Configures AMD SEV-SNP with kernel parameters: `iommu=pt mem_encrypt=on kvm_amd.sev=1`
-- Updates GRUB configuration automatically
-- Reboots the system
-- Includes Dell iDRAC integration examples
+- Displays CPU vendor information
+- Includes Dell iDRAC integration examples for querying BIOS settings
+- Note: Kernel parameters are assumed to be already configured on the host
 
 ### 2. `verify_coco.yaml`
 Verification playbook that checks:
@@ -160,24 +158,17 @@ ansible-playbook -i inventory.ini configure_coco.yaml
 
 ## Technical Details
 
-### Intel TDX Configuration
-- Kernel parameters: `intel_iommu=on tdx_host=on`
-- Enables TDX kernel module
+### Intel TDX Verification
+- Expected kernel parameters: `intel_iommu=on tdx_host=on` (must be pre-configured)
+- Verifies TDX kernel module is loaded
 - Requires BIOS enablement of Intel TDX
-- Verifies via dmesg: `virt/tdx: module initialized`
+- Checks dmesg for: `virt/tdx: module initialized`
 
-### AMD SEV-SNP Configuration
-- Kernel parameters: `iommu=pt mem_encrypt=on kvm_amd.sev=1`
-- Enables CCP (Cryptographic Co-Processor) module
+### AMD SEV-SNP Verification
+- Expected kernel parameters: `iommu=pt mem_encrypt=on kvm_amd.sev=1` (must be pre-configured)
+- Verifies CCP (Cryptographic Co-Processor) module
 - Requires BIOS enablement of AMD SEV-SNP
-- Verifies via dmesg: `SEV-SNP API` version information
-
-### GRUB Configuration
-The playbooks automatically:
-- Backup existing GRUB configuration
-- Update `/etc/default/grub`
-- Regenerate GRUB config with `grub2-mkconfig`
-- No manual intervention required
+- Checks dmesg for: `SEV-SNP API` version information
 
 ### Distrobox Configuration
 - Image: `registry.fedoraproject.org/fedora:43`
@@ -205,15 +196,17 @@ distrobox enter fedora-coco-ansible
 ansible-galaxy collection install dellemc.openmanage --upgrade
 ```
 
-### Confidential computing not detected after reboot
+### Confidential computing not detected
 
 1. **Check BIOS settings**: Confidential computing must be enabled in BIOS/UEFI
    - Intel: Enable "Intel TDX" or "Trust Domain Extensions"
    - AMD: Enable "SEV-SNP" or "Secure Encrypted Virtualization"
 
-2. **Check kernel parameters**:
+2. **Check kernel parameters are configured**:
 ```bash
 cat /proc/cmdline
+# Intel should show: intel_iommu=on tdx_host=on
+# AMD should show: iommu=pt mem_encrypt=on kvm_amd.sev=1
 ```
 
 3. **Check dmesg for errors**:
@@ -242,11 +235,11 @@ grep -E "sev|sme" /proc/cpuinfo
 
 ## Important Notes
 
-- **BIOS Configuration Required**: The Ansible playbooks configure the OS, but confidential computing features must also be enabled in the BIOS/UEFI settings
-- **Reboot Automatic**: The playbook will automatically reboot the system when changes are made
-- **No Wait for Reboot**: As requested, the playbook doesn't wait for the host to come back up (since Ansible runs on the same host)
-- **Root Access**: The configuration playbook requires sudo/root privileges
-- **Production Use**: Test in a non-production environment first
+- **Pre-configured Host**: These playbooks assume kernel parameters are already configured on the host
+- **BIOS Configuration Required**: Confidential computing features must be enabled in the BIOS/UEFI settings
+- **Verification Only**: The playbooks detect CPU type and verify CoCo configuration, they do not modify system settings
+- **Root Access**: The verification playbook requires sudo/root privileges for reading system information
+- **Production Use**: Safe to use in production as no system modifications are made
 
 ## System Requirements
 
@@ -280,13 +273,15 @@ grep -E "sev|sme" /proc/cpuinfo
 # 1. Create distrobox and install everything
 ./setup-coco-distrobox.sh create
 
-# 2. Configure confidential computing
+# 2. Detect CPU type
 distrobox enter fedora-coco-ansible
 cd ~/ansible-coco
 ansible-playbook -i inventory.ini configure_coco.yaml
 
-# 3. After reboot, verify
+# 3. Verify confidential computing
 ./setup-coco-distrobox.sh verify
+# OR from inside distrobox:
+ansible-playbook -i inventory.ini verify_coco.yaml
 ```
 
 ## Support & Contribution

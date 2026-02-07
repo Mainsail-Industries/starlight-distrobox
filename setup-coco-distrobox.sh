@@ -1,9 +1,10 @@
 #!/bin/bash
 #
-# Fedora 43 Distrobox Setup for Confidential Computing Configuration
+# Fedora 43 Distrobox Setup for Confidential Computing Verification
 #
 # This script creates a Fedora 43 distrobox with Ansible and Dell iDRAC modules
-# to configure Intel TDX or AMD SEV-SNP confidential computing on Dell servers.
+# to verify Intel TDX or AMD SEV-SNP confidential computing on Dell servers.
+# Note: Kernel parameters must be pre-configured on the host.
 #
 # Usage:
 #   ./setup-coco-distrobox.sh create    # Create and setup the distrobox
@@ -116,15 +117,13 @@ create_ansible_playbooks() {
 # idrac1.example.com ansible_user=root ansible_password=password
 EOF
 
-    # Create the main playbook for CoCo configuration
+    # Create the main playbook for CoCo verification
     cat > "${ANSIBLE_PLAYBOOK_DIR}/configure_coco.yaml" << 'EOF'
 ---
-- name: Configure Confidential Computing on Dell Server
+- name: Detect System Configuration
   hosts: localhost
   gather_facts: yes
   become: yes
-  vars:
-    reboot_timeout: 600
 
   tasks:
     - name: Gather CPU information
@@ -146,93 +145,11 @@ EOF
         msg: "This playbook only supports Intel or AMD processors"
       when: not (is_intel or is_amd)
 
-    # Intel TDX Configuration
-    - name: Check for Intel TDX support in CPU
-      ansible.builtin.shell: grep -q 'tdx' /proc/cpuinfo
-      register: tdx_cpu_support
-      changed_when: false
-      failed_when: false
-      when: is_intel
-
-    - name: Intel TDX configuration tasks
-      when: is_intel
-      block:
-        - name: Display Intel TDX CPU support status
-          ansible.builtin.debug:
-            msg: "Intel TDX CPU support: {{ 'Available' if tdx_cpu_support.rc == 0 else 'Not available' }}"
-
-        - name: Update GRUB for Intel TDX
-          ansible.builtin.lineinfile:
-            path: /etc/default/grub
-            regexp: '^GRUB_CMDLINE_LINUX='
-            line: 'GRUB_CMDLINE_LINUX="intel_iommu=on tdx_host=on"'
-            backup: yes
-          register: grub_updated_intel
-
-        - name: Rebuild GRUB configuration
-          ansible.builtin.command: grub2-mkconfig -o /boot/grub2/grub.cfg
-          when: grub_updated_intel.changed
-
-        - name: Enable TDX kernel module
-          ansible.builtin.lineinfile:
-            path: /etc/modules-load.d/tdx.conf
-            line: 'tdx'
-            create: yes
-
-    # AMD SEV-SNP Configuration
-    - name: Check for AMD SEV support in CPU
-      ansible.builtin.shell: grep -q 'sev' /proc/cpuinfo
-      register: sev_cpu_support
-      changed_when: false
-      failed_when: false
-      when: is_amd
-
-    - name: AMD SEV-SNP configuration tasks
-      when: is_amd
-      block:
-        - name: Display AMD SEV-SNP CPU support status
-          ansible.builtin.debug:
-            msg: "AMD SEV-SNP CPU support: {{ 'Available' if sev_cpu_support.rc == 0 else 'Not available' }}"
-
-        - name: Update GRUB for AMD SEV-SNP
-          ansible.builtin.lineinfile:
-            path: /etc/default/grub
-            regexp: '^GRUB_CMDLINE_LINUX='
-            line: 'GRUB_CMDLINE_LINUX="iommu=pt mem_encrypt=on kvm_amd.sev=1"'
-            backup: yes
-          register: grub_updated_amd
-
-        - name: Rebuild GRUB configuration
-          ansible.builtin.command: grub2-mkconfig -o /boot/grub2/grub.cfg
-          when: grub_updated_amd.changed
-
-        - name: Enable CCP kernel module
-          ansible.builtin.lineinfile:
-            path: /etc/modules-load.d/sev.conf
-            line: 'ccp'
-            create: yes
-
-    - name: Check if reboot is needed
-      ansible.builtin.set_fact:
-        needs_reboot: "{{ (is_intel and grub_updated_intel.changed) or (is_amd and grub_updated_amd.changed) }}"
-
-    - name: Display reboot status
+    - name: Display note about kernel parameters
       ansible.builtin.debug:
-        msg: "System reboot {{ 'is required' if needs_reboot else 'is not needed' }}"
+        msg: "Note: Kernel parameters are already configured on this host. Skipping configuration."
 
-    - name: Reboot the system
-      ansible.builtin.reboot:
-        msg: "Rebooting to apply Confidential Computing configuration"
-        reboot_timeout: "{{ reboot_timeout }}"
-      when: needs_reboot
-
-    - name: Wait for system to come back online
-      ansible.builtin.wait_for_connection:
-        delay: 30
-        timeout: 300
-      when: needs_reboot
-
-- name: Query Dell iDRAC for BIOS settings (example)
+- name: Query Dell iDRAC for BIOS settings
   hosts: dell_servers
   gather_facts: no
   collections:
@@ -351,23 +268,23 @@ EOF
 # Confidential Computing Ansible Playbooks
 
 ## Overview
-These playbooks configure and verify Intel TDX or AMD SEV-SNP confidential computing on Dell servers.
+These playbooks detect and verify Intel TDX or AMD SEV-SNP confidential computing on Dell servers.
 
 ## Files
 - `inventory.ini`: Ansible inventory file (configure your Dell iDRAC IPs here)
-- `configure_coco.yaml`: Main playbook to configure confidential computing
+- `configure_coco.yaml`: Main playbook to detect CPU type and query iDRAC
 - `verify_coco.yaml`: Verification playbook to check CoCo status
 
 ## Usage
 
-### 1. Configure Confidential Computing
+### 1. Detect CPU and Query iDRAC
 Run from inside the distrobox:
 ```bash
 ansible-playbook -i inventory.ini configure_coco.yaml
 ```
 
 ### 2. Verify Configuration
-After reboot, run:
+Run verification:
 ```bash
 ansible-playbook -i inventory.ini verify_coco.yaml
 ```
@@ -377,10 +294,9 @@ Edit `inventory.ini` to add your Dell iDRAC credentials, then enable the iDRAC t
 
 ## Notes
 - The playbooks automatically detect Intel vs AMD CPUs
-- Intel systems will be configured for TDX
-- AMD systems will be configured for SEV-SNP
-- The system will reboot automatically if configuration changes are made
-- BIOS settings for confidential computing must be enabled manually via iDRAC or BIOS setup
+- Kernel parameters are assumed to be already configured on the host
+- BIOS settings for confidential computing must be enabled via iDRAC or BIOS setup
+- No system reboot is required by these playbooks
 EOF
 
     log_info "Ansible playbooks created in ${ANSIBLE_PLAYBOOK_DIR}"
@@ -396,12 +312,10 @@ display_usage() {
     echo "2. Navigate to the playbooks directory:"
     echo "   cd ${ANSIBLE_PLAYBOOK_DIR}"
     echo ""
-    echo "3. Configure confidential computing:"
+    echo "3. Detect CPU type and query iDRAC (optional):"
     echo "   ansible-playbook -i inventory.ini configure_coco.yaml"
     echo ""
-    echo "4. After reboot, verify the configuration:"
-    echo "   distrobox enter ${DISTROBOX_NAME}"
-    echo "   cd ${ANSIBLE_PLAYBOOK_DIR}"
+    echo "4. Verify confidential computing configuration:"
     echo "   ansible-playbook -i inventory.ini verify_coco.yaml"
     echo ""
     echo "OR run the verification from the host:"
