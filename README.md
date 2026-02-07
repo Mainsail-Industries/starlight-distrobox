@@ -24,6 +24,16 @@ This solution automatically:
 
 ## Installation & Setup
 
+### Step 0: Get this repo on the box
+
+```bash
+git clone https://github.com/Mainsail-Industries/starlight-distrobox.git
+
+or 
+
+curl -L https://github.com/Mainsail-Industries/starlight-distrobox/archive/refs/heads/main.tar.gz | tar -xz
+```
+
 ### Step 1: Create the Distrobox
 
 Run the script to create and configure the distrobox:
