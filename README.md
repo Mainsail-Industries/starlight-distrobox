@@ -135,7 +135,7 @@ dellemc.openmanage                       10.0.1
    ./setup-coco-distrobox.sh verify
    OR: ansible-playbook -i inventory.ini verify_coco.yaml
 
-starlight * fedora ~/starlight-distrobox-main took 9m21s
+starlight * tdx-host ~/starlight-distrobox-main took 9m21s
 ❯ distrobox enter fedora-coco-ansible
 📦[starlight@fedora-coco-ansible]~/starlight-distrobox-main
 ```
