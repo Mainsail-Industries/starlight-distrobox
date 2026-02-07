@@ -1,10 +1,10 @@
 #!/bin/bash
 #
-# Fedora 43 Distrobox Setup for Confidential Computing Verification
+# Fedora 43 Distrobox Setup for Confidential Computing Configuration
 #
 # This script creates a Fedora 43 distrobox with Ansible and Dell iDRAC modules
-# to verify Intel TDX or AMD SEV-SNP confidential computing on Dell servers.
-# Note: Kernel parameters must be pre-configured on the host.
+# to configure Dell BIOS for Intel TDX or AMD SEV-SNP confidential computing.
+# The playbooks configure BIOS via iDRAC, then verify after reboot.
 #
 # Usage:
 #   ./setup-coco-distrobox.sh create    # Create and setup the distrobox
@@ -117,10 +117,10 @@ create_ansible_playbooks() {
 # idrac1.example.com ansible_user=root ansible_password=password
 EOF
 
-    # Create the main playbook for CoCo verification
+    # Create the main playbook for CoCo BIOS configuration
     cat > "${ANSIBLE_PLAYBOOK_DIR}/configure_coco.yaml" << 'EOF'
 ---
-- name: Detect System Configuration
+- name: Detect CPU Type on Local Host
   hosts: localhost
   gather_facts: yes
   become: yes
@@ -145,30 +145,112 @@ EOF
         msg: "This playbook only supports Intel or AMD processors"
       when: not (is_intel or is_amd)
 
-    - name: Display note about kernel parameters
-      ansible.builtin.debug:
-        msg: "Note: Kernel parameters are already configured on this host. Skipping configuration."
+    - name: Set CPU vendor fact for use in other plays
+      ansible.builtin.set_fact:
+        cpu_vendor: "{{ 'intel' if is_intel else 'amd' if is_amd else 'unknown' }}"
+        cacheable: yes
 
-- name: Query Dell iDRAC for BIOS settings
+- name: Configure Dell BIOS for Confidential Computing
   hosts: dell_servers
   gather_facts: no
   collections:
     - dellemc.openmanage
+  vars:
+    cpu_vendor: "{{ hostvars['localhost']['cpu_vendor'] }}"
 
   tasks:
-    - name: Get iDRAC system information
+    - name: Display target server and CPU type
+      ansible.builtin.debug:
+        msg: "Configuring {{ inventory_hostname }} for {{ cpu_vendor | upper }} Confidential Computing"
+
+    - name: Get current BIOS configuration
       dellemc.openmanage.idrac_system_info:
         idrac_ip: "{{ inventory_hostname }}"
         idrac_user: "{{ ansible_user }}"
         idrac_password: "{{ ansible_password }}"
-      register: idrac_info
+        validate_certs: no
+      register: system_info
       delegate_to: localhost
-      when: false  # Set to true when you have iDRAC credentials configured
 
-    - name: Display iDRAC system info
+    - name: Display current system information
       ansible.builtin.debug:
-        var: idrac_info
-      when: false  # Set to true when you have iDRAC credentials configured
+        msg:
+          - "Model: {{ system_info.system_info.Model | default('Unknown') }}"
+          - "Service Tag: {{ system_info.system_info.ServiceTag | default('Unknown') }}"
+          - "BIOS Version: {{ system_info.system_info.BiosVersion | default('Unknown') }}"
+
+    # Intel TDX BIOS Configuration
+    - name: Configure BIOS for Intel TDX
+      dellemc.openmanage.idrac_bios:
+        idrac_ip: "{{ inventory_hostname }}"
+        idrac_user: "{{ ansible_user }}"
+        idrac_password: "{{ ansible_password }}"
+        validate_certs: no
+        attributes:
+          MemOpMode: "OptimizerMode"  # Memory Operating Mode
+          MemEncryption: "MultiKey"   # Memory Encryption - required for TDX
+          GlobalMemIntegrity: "Disabled"  # Must be disabled for TDX
+          IntelTdx: "Enabled"  # Intel Trusted Domain Extensions
+          IntelTdxKeySplit: "1"  # TME-MT/TDX Key Split (non-zero value)
+          TdxSeamLoader: "Enabled"  # TDX Secure Arbitration Mode Loader
+          SriovGlobalEnable: "Enabled"  # SR-IOV support
+          VtForDirectIo: "Enabled"  # Intel VT-d
+          ProcVirtualization: "Enabled"  # Intel VT
+        apply_time: Immediate
+        job_wait: true
+        job_wait_timeout: 1200
+      delegate_to: localhost
+      register: intel_bios_result
+      when: cpu_vendor == 'intel'
+
+    - name: Display Intel BIOS configuration result
+      ansible.builtin.debug:
+        msg:
+          - "BIOS Configuration Status: {{ intel_bios_result.msg | default('N/A') }}"
+          - "Job Status: {{ intel_bios_result.job_details.JobState | default('N/A') }}"
+      when: cpu_vendor == 'intel' and intel_bios_result is defined
+
+    # AMD SEV-SNP BIOS Configuration
+    - name: Configure BIOS for AMD SEV-SNP
+      dellemc.openmanage.idrac_bios:
+        idrac_ip: "{{ inventory_hostname }}"
+        idrac_user: "{{ ansible_user }}"
+        idrac_password: "{{ ansible_password }}"
+        validate_certs: no
+        attributes:
+          MemOpMode: "OptimizerMode"  # Memory Operating Mode
+          SecureMemoryEncryption: "Enabled"  # SME/SEV base feature
+          SevSnp: "Enabled"  # SEV-SNP specific
+          SnpMemCoverage: "Enabled"  # SNP Memory Coverage
+          SriovGlobalEnable: "Enabled"  # SR-IOV support
+          IommuSupport: "Enabled"  # IOMMU support
+          ProcVirtualization: "Enabled"  # AMD-V
+        apply_time: Immediate
+        job_wait: true
+        job_wait_timeout: 1200
+      delegate_to: localhost
+      register: amd_bios_result
+      when: cpu_vendor == 'amd'
+
+    - name: Display AMD BIOS configuration result
+      ansible.builtin.debug:
+        msg:
+          - "BIOS Configuration Status: {{ amd_bios_result.msg | default('N/A') }}"
+          - "Job Status: {{ amd_bios_result.job_details.JobState | default('N/A') }}"
+      when: cpu_vendor == 'amd' and amd_bios_result is defined
+
+    - name: Display reboot instruction
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "BIOS CONFIGURATION COMPLETE"
+          - "=========================================="
+          - "The server has been configured for Confidential Computing."
+          - "A system reboot is REQUIRED for changes to take effect."
+          - ""
+          - "Please reboot the server now, then run the verification playbook:"
+          - "  ansible-playbook -i inventory.ini verify_coco.yaml"
+          - "=========================================="
 EOF
 
     # Create verification playbook
@@ -268,35 +350,93 @@ EOF
 # Confidential Computing Ansible Playbooks
 
 ## Overview
-These playbooks detect and verify Intel TDX or AMD SEV-SNP confidential computing on Dell servers.
+These playbooks configure Dell BIOS via iDRAC for Intel TDX or AMD SEV-SNP confidential computing, then verify the configuration after reboot.
 
 ## Files
 - `inventory.ini`: Ansible inventory file (configure your Dell iDRAC IPs here)
-- `configure_coco.yaml`: Main playbook to detect CPU type and query iDRAC
-- `verify_coco.yaml`: Verification playbook to check CoCo status
+- `configure_coco.yaml`: Configure Dell BIOS for confidential computing via iDRAC
+- `verify_coco.yaml`: Verification playbook to check CoCo status after reboot
+
+## Prerequisites
+- Dell iDRAC credentials with BIOS configuration privileges
+- Network access to iDRAC interface
+- Dell OpenManage Ansible collection installed (already included)
 
 ## Usage
 
-### 1. Detect CPU and Query iDRAC
+### Step 1: Configure inventory.ini
+Edit `inventory.ini` and add your Dell server iDRAC IP addresses and credentials:
+
+```ini
+[dell_servers]
+idrac1.example.com ansible_user=root ansible_password=yourpassword
+# Add more servers as needed
+```
+
+### Step 2: Configure BIOS for Confidential Computing
 Run from inside the distrobox:
 ```bash
 ansible-playbook -i inventory.ini configure_coco.yaml
 ```
 
-### 2. Verify Configuration
-Run verification:
+This playbook will:
+- Detect your CPU type (Intel or AMD)
+- Connect to Dell iDRAC
+- Query current BIOS settings
+- Configure appropriate BIOS settings for confidential computing:
+  - **Intel**: TDX, Memory Encryption, VT-d, etc.
+  - **AMD**: SEV-SNP, SME, IOMMU, etc.
+- Create and execute BIOS configuration job
+- Wait for job completion
+
+### Step 3: Reboot the Server
+After BIOS configuration completes, manually reboot the server:
+```bash
+sudo reboot
+```
+
+### Step 4: Verify Configuration
+After the server comes back online, verify confidential computing is working:
 ```bash
 ansible-playbook -i inventory.ini verify_coco.yaml
 ```
 
-### 3. Query Dell iDRAC (Optional)
-Edit `inventory.ini` to add your Dell iDRAC credentials, then enable the iDRAC tasks in `configure_coco.yaml` by setting `when: false` to `when: true`.
+## BIOS Settings Configured
 
-## Notes
-- The playbooks automatically detect Intel vs AMD CPUs
-- Kernel parameters are assumed to be already configured on the host
-- BIOS settings for confidential computing must be enabled via iDRAC or BIOS setup
-- No system reboot is required by these playbooks
+### Intel TDX
+- Memory Encryption: MultiKey
+- Global Memory Integrity: Disabled
+- Intel TDX: Enabled
+- TDX Key Split: 1
+- TDX SEAM Loader: Enabled
+- Intel VT-d: Enabled
+- Intel VT: Enabled
+- SR-IOV: Enabled
+
+### AMD SEV-SNP
+- Secure Memory Encryption: Enabled
+- SEV-SNP: Enabled
+- SNP Memory Coverage: Enabled
+- IOMMU Support: Enabled
+- AMD-V: Enabled
+- SR-IOV: Enabled
+
+## Troubleshooting
+
+### iDRAC Connection Failed
+- Verify network connectivity: `ping <idrac-ip>`
+- Verify credentials in inventory.ini
+- Check iDRAC is accessible via web browser
+
+### BIOS Job Failed
+- Check iDRAC job queue for errors
+- Verify BIOS version supports confidential computing
+- Review Dell support documentation for your server model
+
+### Configuration Not Applied
+- Ensure server was rebooted after BIOS configuration
+- Check BIOS settings manually via iDRAC web interface
+- Run verification playbook to see detailed status
 EOF
 
     log_info "Ansible playbooks created in ${ANSIBLE_PLAYBOOK_DIR}"
@@ -306,20 +446,23 @@ EOF
 display_usage() {
     log_info "Setup complete! Here's how to use your new distrobox:"
     echo ""
-    echo "1. Enter the distrobox:"
+    echo "1. Configure iDRAC credentials:"
+    echo "   Edit ${ANSIBLE_PLAYBOOK_DIR}/inventory.ini"
+    echo "   Add your Dell iDRAC IP addresses and credentials"
+    echo ""
+    echo "2. Enter the distrobox:"
     echo "   distrobox enter ${DISTROBOX_NAME}"
     echo ""
-    echo "2. Navigate to the playbooks directory:"
+    echo "3. Configure BIOS for confidential computing:"
     echo "   cd ${ANSIBLE_PLAYBOOK_DIR}"
-    echo ""
-    echo "3. Detect CPU type and query iDRAC (optional):"
     echo "   ansible-playbook -i inventory.ini configure_coco.yaml"
     echo ""
-    echo "4. Verify confidential computing configuration:"
-    echo "   ansible-playbook -i inventory.ini verify_coco.yaml"
+    echo "4. Reboot the server:"
+    echo "   sudo reboot"
     echo ""
-    echo "OR run the verification from the host:"
+    echo "5. After reboot, verify confidential computing:"
     echo "   $0 verify"
+    echo "   OR: ansible-playbook -i inventory.ini verify_coco.yaml"
     echo ""
 }
 
