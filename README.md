@@ -1,418 +1,200 @@
-# Fedora 43 Distrobox for Confidential Computing Configuration
+# Fedora 43 Distrobox for Immutable Host Development
 
-A comprehensive bash script that creates a Fedora 43 distrobox with Ansible and Dell iDRAC modules to configure and verify Intel TDX or AMD SEV-SNP confidential computing on Dell PowerEdge servers.
+A modular distrobox setup for development on immutable Linux hosts (Fedora Silverblue, uBlue, etc.). Provides a full mutable development environment inside a container with optional tool categories.
 
 ## Overview
 
-This solution automatically:
-- Creates a Fedora 43 distrobox with systemd support
-- Installs Ansible and Dell OpenManage modules
-- Generates Ansible playbooks to configure Dell BIOS via iDRAC
-- Auto-detects Intel vs AMD CPUs
-- Configures appropriate BIOS settings for confidential computing (TDX or SEV-SNP)
-- Verifies confidential computing is enabled after reboot
+This script creates a Fedora 43 distrobox and installs tools in configurable modules:
+
+| Module | What's Included |
+|--------|----------------|
+| *base* | git, curl, wget, jq, yq, strace, ltrace (always installed) |
+| `--coco` | Ansible, Dell iDRAC modules, CoCo BIOS playbooks |
+| `--dev` | CLI helpers, editors (vim/neovim/emacs), gcc/cmake/golang, rustup, nvm, pyenv, sdkman |
+| `--k8s` | kubectl, helm, kustomize, kubectx/kubens, k9s |
+| `--cloud` | AWS CLI v2, Google Cloud CLI, Azure CLI, doctl |
+| `--virt` | virt-manager, virt-viewer, virsh (libvirt-client) |
+| `--full` | All of the above |
 
 ## Requirements
 
 - distrobox installed on the host system
 - podman or docker as the container runtime
-- Dell PowerEdge server with iDRAC 8 or newer
-- Intel CPU with TDX support (5th Gen Xeon Scalable) or AMD CPU with SEV-SNP support (EPYC 7003+)
-- Dell iDRAC credentials with BIOS configuration privileges
-- Network access to iDRAC management interface
-- Root/sudo access for verification commands
+- Internet connectivity for package and binary downloads
 
-## Installation & Setup
-
-### Step 0: Get this repo on the box
+## Quick Start
 
 ```bash
+# Get the repo
 git clone https://github.com/Mainsail-Industries/starlight-distrobox.git
+cd starlight-distrobox
 
-or 
-
+# or
 curl -L https://github.com/Mainsail-Industries/starlight-distrobox/archive/refs/heads/main.tar.gz | tar -xz
 ```
 
-### Step 1: Create the Distrobox
+```bash
+# Dev workstation with Kubernetes tools
+./setup-distrobox.sh create --dev --k8s
 
-Run the script to create and configure the distrobox:
+# Everything
+./setup-distrobox.sh create --full
+
+# CoCo-only with a custom container name
+./setup-distrobox.sh create --coco --name fedora-coco
+
+# Base only (git, curl, jq, yq, strace, ltrace)
+./setup-distrobox.sh create
+```
 
 ```bash
-./setup-coco-distrobox.sh create
+# Enter the distrobox
+distrobox enter fedora-dev
 ```
 
-This will:
-- Create a Fedora 43 distrobox named `fedora-coco-ansible`
-- Install Ansible and all required Python dependencies
-- Install Dell OpenManage Python SDK (omsdk)
-- Install the `dellemc.openmanage` Ansible collection
-- Generate Ansible playbooks in `~/ansible-coco/`
+## Module Details
 
-### Step 2: Configure iDRAC Credentials
+### Base (always installed)
 
-Edit the inventory file to add your Dell iDRAC details:
+Installed via DNF into every distrobox:
+
+- `git`, `curl`, `wget` — essentials
+- `jq`, `yq` — JSON/YAML processing
+- `strace`, `ltrace` — debugging
+
+### --dev
+
+**DNF packages:**
+- CLI helpers: `ripgrep`, `fd-find`, `bat`, `eza`, `fzf`, `tmux`, `htop`, `tealdeer`
+- Editors: `vim-enhanced`, `neovim`, `emacs-nox`
+- Build tools: `gcc`, `gcc-c++`, `make`, `cmake`, `golang`
+- Linting: `ShellCheck`
+- pyenv build deps: `zlib-devel`, `bzip2-devel`, `readline-devel`, `sqlite-devel`, `libffi-devel`, `xz-devel`, `tk-devel`
+
+**User-space toolchain installers** (installed to `$HOME`, shared with host):
+- **rustup** — Rust toolchain manager (`source ~/.cargo/env`)
+- **nvm** — Node.js version manager (`nvm install --lts`)
+- **pyenv** — Python version manager (`pyenv install 3.12`)
+- **sdkman** — JVM toolchain manager (`sdk install java`)
+
+### --coco
+
+Confidential Computing support for Dell PowerEdge servers:
+- Ansible + Dell OpenManage Python SDK + `dellemc.openmanage` collection
+- Auto-generates playbooks in `~/ansible-coco/` for Intel TDX and AMD SEV-SNP BIOS configuration via iDRAC
+
+**Requirements for CoCo:**
+- Dell PowerEdge server with iDRAC 8+
+- Intel 5th Gen Xeon Scalable (TDX) or AMD EPYC 7003+ (SEV-SNP)
+- iDRAC credentials with BIOS configuration privileges
+
+### --k8s
+
+- `kubectx` / `kubens` — context and namespace switching (DNF)
+- `kubectl` — Kubernetes CLI (binary download)
+- `helm` — package manager (install script)
+- `kustomize` — manifest customization (binary download)
+- `k9s` — terminal UI for Kubernetes (binary download)
+
+### --cloud
+
+- **AWS CLI v2** — bundled installer
+- **Google Cloud CLI** — standalone SDK installer
+- **Azure CLI** — pip install
+- **doctl** — DigitalOcean CLI (binary download)
+
+### --virt
+
+- `virt-manager` — GUI VM management (export to host desktop with `distrobox-export --app virt-manager`)
+- `virt-viewer` — SPICE/VNC console viewer
+- `libvirt-client` — `virsh` CLI for VM operations
+
+## CoCo Workflow
 
 ```bash
-cd ~/ansible-coco
-nano inventory.ini
-```
-
-Add your iDRAC IP addresses and credentials:
-```ini
-[dell_servers]
-10.0.0.100 ansible_user=root ansible_password=yourpassword
-```
-
-### Step 3: Configure BIOS for Confidential Computing
-
-Enter the distrobox and run the configuration playbook:
-
-```bash
-distrobox enter fedora-coco-ansible
-cd ~/ansible-coco
-ansible-playbook -i inventory.ini configure_coco.yaml
-```
-
-The playbook will:
-- Detect your CPU vendor (Intel or AMD) on localhost
-- Connect to Dell iDRAC
-- Query current BIOS settings
-- Configure BIOS attributes for confidential computing
-- Create and execute BIOS configuration job
-- Wait for job completion
-
-### Step 4: Reboot the Server
-
-After BIOS configuration completes, reboot the server:
-```bash
-sudo reboot
-```
-
-### Step 5: Verify Configuration
-
-After the server comes back online, verify that confidential computing is enabled:
-
-**Option A: From the host**
-```bash
-./setup-coco-distrobox.sh verify
-```
-
-**Option B: From inside the distrobox**
-```bash
-distrobox enter fedora-coco-ansible
-cd ~/ansible-coco
-ansible-playbook -i inventory.ini verify_coco.yaml
-```
-
-## Successfull Output
-
-```bash
-[INFO] Verifying Dell OpenManage collection...
-dellemc.openmanage                       9.12.3
-dellemc.openmanage                       10.0.1
-[INFO] Setup complete!
-[INFO] Ansible and Dell iDRAC modules installed successfully
-[INFO] Creating Ansible playbooks for confidential computing setup...
-[INFO] Ansible playbooks created in /var/home/starlight/ansible-coco
-[INFO] Setup complete! Here's how to use your new distrobox:
-
-1. Configure iDRAC credentials:
-   Edit /var/home/starlight/ansible-coco/inventory.ini
-   Add your Dell iDRAC IP addresses and credentials
-
-2. Enter the distrobox:
-   distrobox enter fedora-coco-ansible
-
-3. Configure BIOS for confidential computing:
-   cd /var/home/starlight/ansible-coco
-   ansible-playbook -i inventory.ini configure_coco.yaml
-
-4. Reboot the server:
-   sudo reboot
-
-5. After reboot, verify confidential computing:
-   ./setup-coco-distrobox.sh verify
-   OR: ansible-playbook -i inventory.ini verify_coco.yaml
-
-starlight * tdx-host ~/starlight-distrobox-main took 9m21s
-❯ distrobox enter fedora-coco-ansible
-📦[starlight@fedora-coco-ansible]~/starlight-distrobox-main
-```
-
-
-## Generated Files
-
-The script creates the following files in `~/ansible-coco/`:
-
-### 1. `configure_coco.yaml`
-Main Ansible playbook that configures Dell BIOS via iDRAC:
-- Auto-detects Intel vs AMD CPU from `/proc/cpuinfo` on localhost
-- Connects to Dell iDRAC on target servers
-- Queries current BIOS configuration
-- Configures BIOS attributes for confidential computing:
-  - **Intel TDX**: Memory Encryption (MultiKey), Intel TDX, VT-d, SEAM Loader, etc.
-  - **AMD SEV-SNP**: SEV-SNP, SME, IOMMU, SNP Memory Coverage, etc.
-- Creates BIOS configuration job and waits for completion
-- Provides reboot instructions
-
-### 2. `verify_coco.yaml`
-Verification playbook that checks:
-- CPU vendor detection
-- Confidential computing CPU flags in `/proc/cpuinfo`
-- TDX/SEV initialization messages in `dmesg`
-- IOMMU configuration and groups
-- Kernel command line parameters
-- SEV device presence at `/dev/sev` (AMD only)
-
-### 3. `inventory.ini`
-Ansible inventory file. Edit this to add your Dell iDRAC IPs for remote BIOS configuration:
-
-```ini
-[localhost]
-127.0.0.1 ansible_connection=local
-
-[dell_servers]
-# Add your Dell iDRAC IPs here, for example:
-# idrac1.example.com ansible_user=root ansible_password=password
-```
-
-### 4. `README.md`
-Documentation for the Ansible playbooks
-
-## Script Commands
-
-### Create Mode (Default)
-```bash
-./setup-coco-distrobox.sh create
-```
-Creates the distrobox, installs Ansible and dependencies, and generates playbooks.
-
-### Verify Mode
-```bash
-./setup-coco-distrobox.sh verify
-```
-Runs verification checks on the host system to confirm confidential computing is enabled.
-
-## What Gets Verified
-
-### Intel TDX Verification
-- ✓ TDX CPU flag in `/proc/cpuinfo`
-- ✓ `virt/tdx: module initialized` message in dmesg
-- ✓ TDX private KeyID range detection
-- ✓ IOMMU groups configuration
-
-### AMD SEV-SNP Verification
-- ✓ SEV/SME CPU flags in `/proc/cpuinfo`
-- ✓ `sev enabled` and `SEV-SNP API` messages in dmesg
-- ✓ CCP (AMD Secure Processor) initialization
-- ✓ `/dev/sev` device presence
-- ✓ IOMMU groups configuration
-
-## Dell iDRAC Integration
-
-The playbooks use Dell OpenManage Ansible modules to configure BIOS settings via iDRAC.
-
-### Required Credentials
-
-You need iDRAC credentials with BIOS configuration privileges:
-- Typically the `root` account or a user with Administrator privileges
-- Network access to iDRAC IP address (usually separate management network)
-
-### BIOS Settings Configured
-
-The playbook automatically configures these BIOS attributes:
-
-**Intel TDX:**
-- Memory Encryption: MultiKey (required for TDX)
-- Global Memory Integrity: Disabled (must be off for TDX)
-- Intel TDX: Enabled
-- TDX Key Split: 1 (non-zero value required)
-- TDX SEAM Loader: Enabled
-- Intel VT-d: Enabled (virtualization for I/O)
-- Intel VT: Enabled (CPU virtualization)
-- SR-IOV: Enabled
-
-**AMD SEV-SNP:**
-- Secure Memory Encryption: Enabled (base SME/SEV)
-- SEV-SNP: Enabled
-- SNP Memory Coverage: Enabled
-- IOMMU Support: Enabled
-- AMD-V: Enabled (CPU virtualization)
-- SR-IOV: Enabled
-
-### Job Execution
-
-The playbook uses `apply_time: Immediate` and `job_wait: true` to:
-1. Create a BIOS configuration job in iDRAC
-2. Wait for the job to complete (up to 20 minutes)
-3. Report job status
-
-After completion, you must manually reboot the server for changes to take effect.
-
-## Technical Details
-
-### Intel TDX Configuration
-- Uses `dellemc.openmanage.idrac_bios` module to configure BIOS
-- Requires 5th Gen Intel Xeon Scalable processors (16th Gen PowerEdge or newer)
-- Key BIOS attributes: `MemEncryption: MultiKey`, `IntelTdx: Enabled`, `IntelTdxKeySplit: 1`
-- BIOS job is executed immediately and playbook waits for completion
-- After reboot, kernel will initialize TDX with dmesg: `virt/tdx: module initialized`
-- Requires kernel parameters: `intel_iommu=on tdx_host=on` (configure separately)
-
-### AMD SEV-SNP Configuration
-- Uses `dellemc.openmanage.idrac_bios` module to configure BIOS
-- Requires AMD EPYC 7003 series or newer processors (15th Gen PowerEdge or newer)
-- Key BIOS attributes: `SecureMemoryEncryption: Enabled`, `SevSnp: Enabled`, `IommuSupport: Enabled`
-- BIOS job is executed immediately and playbook waits for completion
-- After reboot, kernel will initialize SEV with dmesg: `SEV-SNP API` version
-- Requires kernel parameters: `iommu=pt mem_encrypt=on kvm_amd.sev=1` (configure separately)
-
-### Distrobox Configuration
-- Image: `registry.fedoraproject.org/fedora:43`
-- Init system: systemd enabled
-- Network: host network access for Dell iDRAC connectivity
-- Filesystem: host HOME directory mounted
-
-## Troubleshooting
-
-### Distrobox fails to create
-```bash
-# Check if podman/docker is running
-podman ps
-# or
-docker ps
-
-# Check distrobox version
-distrobox version
-```
-
-### Ansible collection not found
-```bash
-# Manually install the Dell collection
-distrobox enter fedora-coco-ansible
-ansible-galaxy collection install dellemc.openmanage --upgrade
-```
-
-### Confidential computing not detected
-
-1. **Check BIOS settings**: Confidential computing must be enabled in BIOS/UEFI
-   - Intel: Enable "Intel TDX" or "Trust Domain Extensions"
-   - AMD: Enable "SEV-SNP" or "Secure Encrypted Virtualization"
-
-2. **Check kernel parameters are configured**:
-```bash
-cat /proc/cmdline
-# Intel should show: intel_iommu=on tdx_host=on
-# AMD should show: iommu=pt mem_encrypt=on kvm_amd.sev=1
-```
-
-3. **Check dmesg for errors**:
-```bash
-# Intel
-dmesg | grep -i tdx
-
-# AMD
-dmesg | grep -iE "sev|ccp"
-```
-
-4. **Verify CPU support**:
-```bash
-# Intel
-grep tdx /proc/cpuinfo
-
-# AMD
-grep -E "sev|sme" /proc/cpuinfo
-```
-
-### iDRAC connection fails
-- Verify network connectivity: `ping idrac-ip`
-- Verify iDRAC is accessible via web browser: `https://idrac-ip`
-- Check credentials in `inventory.ini` (need Administrator privileges)
-- Verify Dell OpenManage collection: `ansible-galaxy collection list | grep dellemc`
-- Install OMSDK if missing: `pip3 install --user omsdk --upgrade`
-- Check firewall rules allow access to iDRAC (ports 443, 5900)
-
-### BIOS configuration job fails
-- Check iDRAC job queue via web interface
-- Verify BIOS version supports confidential computing features
-- Check iDRAC logs for detailed error messages
-- Ensure no other BIOS configuration jobs are pending
-- Try manually clearing the job queue in iDRAC
-
-### Changes not applied after reboot
-- Verify BIOS job completed successfully (check iDRAC job history)
-- Check BIOS settings manually via iDRAC web interface: Configuration → BIOS Settings
-- Ensure server was fully rebooted (not just iDRAC reset)
-- Some BIOS settings may require multiple reboots to take effect
-
-## Important Notes
-
-- **BIOS Configuration via iDRAC**: The playbooks configure BIOS settings remotely via Dell iDRAC
-- **Manual Reboot Required**: After BIOS configuration, you must manually reboot the server
-- **Kernel Parameters**: The playbooks configure BIOS but do NOT configure kernel boot parameters - you must add these separately to GRUB
-- **iDRAC Credentials**: You need Administrator-level iDRAC credentials to configure BIOS
-- **Network Access**: iDRAC must be accessible over the network from where you run the playbook
-- **BIOS Version**: Ensure your Dell server BIOS version supports confidential computing (check Dell support site)
-- **Production Use**: Test in a non-production environment first, as BIOS changes can affect system stability
-
-## System Requirements
-
-### Minimum Requirements
-- Fedora, RHEL, or compatible Linux distribution on host
-- 4GB RAM (for distrobox)
-- 10GB free disk space
-- Internet connectivity for package installation
-
-### Dell Server Requirements
-- Dell PowerEdge server with iDRAC 8 or newer
-- Intel CPU with TDX support (4th Gen Xeon Scalable or newer)
-  OR
-- AMD CPU with SEV-SNP support (EPYC 7003 series or newer)
-- BIOS/UEFI with confidential computing support
-- Network access to iDRAC interface
-
-## References & Documentation
-
-- [Distrobox Official Documentation](https://distrobox.it/)
-- [Distrobox GitHub](https://github.com/89luca89/distrobox)
-- [Dell OpenManage Ansible Modules](https://github.com/dell/dellemc-openmanage-ansible-modules)
-- [Intel TDX Linux Kernel Documentation](https://docs.kernel.org/arch/x86/tdx.html)
-- [AMD SEV Documentation](https://github.com/AMDESE/AMDSEV)
-- [Intel TDX Enabling Guide](https://cc-enabling.trustedservices.intel.com/intel-tdx-enabling-guide/)
-- [Dell OpenManage Ansible User Guide](https://www.dell.com/support/manuals/en-us/openmanage-ansible-modules/)
-
-## Quick Start Summary
-
-```bash
-# 1. Create distrobox and install everything
-./setup-coco-distrobox.sh create
+# 1. Create distrobox with CoCo support
+./setup-distrobox.sh create --coco
 
 # 2. Configure iDRAC credentials
 cd ~/ansible-coco
-nano inventory.ini  # Add your iDRAC IPs and credentials
+nano inventory.ini
+# Add: idrac1.example.com ansible_user=root ansible_password=yourpassword
 
 # 3. Configure BIOS via iDRAC
-distrobox enter fedora-coco-ansible
+distrobox enter fedora-dev
 cd ~/ansible-coco
 ansible-playbook -i inventory.ini configure_coco.yaml
 
 # 4. Reboot the server
 sudo reboot
 
-# 5. After reboot, verify confidential computing
-./setup-coco-distrobox.sh verify
-# OR from inside distrobox:
-ansible-playbook -i inventory.ini verify_coco.yaml
+# 5. Verify confidential computing
+./setup-distrobox.sh verify
 ```
 
-## Support & Contribution
+### BIOS Settings Configured
 
-For issues or questions:
-- Check the Troubleshooting section
-- Review Dell OpenManage and distrobox documentation
-- Verify BIOS settings for confidential computing features
+**Intel TDX:**
+- Memory Encryption: MultiKey
+- Global Memory Integrity: Disabled
+- Intel TDX: Enabled
+- TDX Key Split: 1
+- TDX SEAM Loader: Enabled
+- Intel VT-d / VT: Enabled
+- SR-IOV: Enabled
 
-## License
+**AMD SEV-SNP:**
+- Secure Memory Encryption: Enabled
+- SEV-SNP: Enabled
+- SNP Memory Coverage: Enabled
+- IOMMU Support: Enabled
+- AMD-V: Enabled
+- SR-IOV: Enabled
 
-This script is provided as-is for use with Dell PowerEdge servers and confidential computing configuration.
+## Troubleshooting
+
+### Distrobox fails to create
+```bash
+podman ps        # or: docker ps
+distrobox version
+```
+
+### Re-running module setup
+The `create` command replaces any existing distrobox with the same name. To add modules, re-run with the full set of flags you want:
+```bash
+./setup-distrobox.sh create --dev --k8s --cloud
+```
+
+### CoCo not detected after reboot
+1. Check BIOS settings via iDRAC web interface
+2. Verify kernel parameters: `cat /proc/cmdline`
+   - Intel: `intel_iommu=on tdx_host=on`
+   - AMD: `iommu=pt mem_encrypt=on kvm_amd.sev=1`
+3. Check dmesg: `dmesg | grep -iE "tdx|sev|ccp"`
+
+### iDRAC connection fails
+- Verify connectivity: `ping <idrac-ip>`
+- Check credentials in `inventory.ini`
+- Verify Dell OpenManage collection: `ansible-galaxy collection list | grep dellemc`
+
+### GUI apps (virt-manager) not displaying
+Export from inside the distrobox to the host desktop:
+```bash
+distrobox enter fedora-dev
+distrobox-export --app virt-manager
+```
+Requires a display server (X11/Wayland) on the host.
+
+## Technical Notes
+
+- **Distrobox image:** `registry.fedoraproject.org/fedora:43` with systemd init
+- **Home directory:** Shared between host and distrobox — user-space tools (rustup, nvm, pyenv, sdkman, gcloud) are accessible from both
+- **Container-only binaries:** Tools installed to `/usr/local/bin/` (kubectl, helm, k9s, etc.) only exist inside the container
+- **Default container name:** `fedora-dev` (override with `--name`)
+
+## References
+
+- [Distrobox Documentation](https://distrobox.it/)
+- [Dell OpenManage Ansible Modules](https://github.com/dell/dellemc-openmanage-ansible-modules)
+- [Intel TDX Documentation](https://docs.kernel.org/arch/x86/tdx.html)
+- [AMD SEV Documentation](https://github.com/AMDESE/AMDSEV)
