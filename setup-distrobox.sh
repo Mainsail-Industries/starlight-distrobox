@@ -222,8 +222,24 @@ setup_dev_toolchains() {
         echo "[INFO] rustup installed (source ~/.cargo/env to activate)"
 
         echo "[INFO] Installing nvm..."
+        # Pin install dir to ~/.nvm so it does not fall back to the XDG path
+        # (~/.config/nvm). The README and the post-create help message both
+        # reference ~/.nvm, so keep the on-disk layout consistent.
+        export NVM_DIR="$HOME/.nvm"
         NVM_VERSION=$(curl -s https://api.github.com/repos/nvm-sh/nvm/releases/latest | grep tag_name | cut -d\" -f4)
         curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh" | bash
+        # nvm`s installer tries to edit ~/.bashrc on its own, but its detection
+        # of an interactive profile can silently skip the edit in our non-
+        # interactive `set -euo pipefail` context. Append an idempotent source
+        # snippet ourselves so new shells auto-load nvm like rustup/pyenv/sdkman.
+        if ! grep -q "NVM_DIR" ~/.bashrc 2>/dev/null; then
+            cat >> ~/.bashrc << '\''NVMEOF'\''
+# nvm
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+NVMEOF
+        fi
         echo "[INFO] nvm ${NVM_VERSION} installed"
 
         echo "[INFO] Installing pyenv..."
