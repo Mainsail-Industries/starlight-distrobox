@@ -13,7 +13,7 @@ This script creates a Fedora 43 distrobox and installs tools in configurable mod
 | `--dev` | CLI helpers, editors (vim/neovim/emacs), gcc/cmake/golang, rustup, nvm, pyenv, sdkman |
 | `--k8s` | kubectl, helm, kustomize, kubectx/kubens, k9s |
 | `--cloud` | AWS CLI v2, Google Cloud CLI, Azure CLI, doctl |
-| `--virt` | virt-manager, virt-viewer, virsh (libvirt-client) |
+| `--virt` | virt-manager, virt-viewer, virsh (libvirt-client), virt-v2v |
 | `--full` | All of the above |
 
 ## Requirements
@@ -108,6 +108,7 @@ Confidential Computing support for Dell PowerEdge servers:
 - `virt-manager` — GUI VM management (export to host desktop with `distrobox-export --app virt-manager`)
 - `virt-viewer` — SPICE/VNC console viewer
 - `libvirt-client` — `virsh` CLI for VM operations
+- `virt-v2v` — convert foreign hypervisor VMs (VMware, Hyper-V, etc.) to KVM/libvirt
 
 ## CoCo Workflow
 
