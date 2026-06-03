@@ -139,7 +139,7 @@ build_package_list() {
     fi
 
     if $ENABLE_VIRT; then
-        packages+=(virt-manager virt-viewer libvirt-client)
+        packages+=(virt-manager virt-viewer libvirt-client virt-v2v)
     fi
 
     # Deduplicate and emit
@@ -672,7 +672,7 @@ display_usage() {
     fi
 
     if $ENABLE_VIRT; then
-        echo "Virtualization tools available: virt-manager, virt-viewer, virsh"
+        echo "Virtualization tools available: virt-manager, virt-viewer, virsh, virt-v2v"
         echo "  Export GUI apps: distrobox-export --app virt-manager"
         echo ""
     fi
