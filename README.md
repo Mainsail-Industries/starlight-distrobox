@@ -22,15 +22,21 @@ This script creates a Fedora 43 distrobox and installs tools in configurable mod
 - podman or docker as the container runtime
 - Internet connectivity for package and binary downloads
 
+Notably **not** required on the host: `git`, build tools, language runtimes. Everything lives inside the distrobox.
+
 ## Quick Start
 
+Immutable hosts (Silverblue, uBlue, etc.) often ship without `git`. The script is a single self-contained file — `curl` is enough:
+
 ```bash
-# Get the repo
+# Single-file download (no git required)
+curl -fsSL -o setup-distrobox.sh \
+  https://raw.githubusercontent.com/Mainsail-Industries/starlight-distrobox/main/setup-distrobox.sh
+chmod +x setup-distrobox.sh
+
+# or, if you have git
 git clone https://github.com/Mainsail-Industries/starlight-distrobox.git
 cd starlight-distrobox
-
-# or
-curl -L https://github.com/Mainsail-Industries/starlight-distrobox/archive/refs/heads/main.tar.gz | tar -xz
 ```
 
 ```bash
