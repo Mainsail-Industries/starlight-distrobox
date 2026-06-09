@@ -363,25 +363,201 @@ virt-v2v -i disk guest.img \
 
 ### 6.2 VMware ESXi (over SSH) → local libvirt
 
-No vCenter, no VDDK — works against the ESXi host directly.
+This is the path you reach for when you have **shell on an ESXi host
+but no vCenter** (lab / edge / standalone ESXi). It is the simplest
+VMware-side workflow and needs nothing on the ESXi host beyond what
+ships in the box.
+
+**What is happening**
+
+- *VMX* is the VM definition file on a VMFS datastore (`/vmfs/volumes/<datastore>/<VM>/<VM>.vmx`).
+  It points at one or more `.vmdk` flat files that hold the actual disk
+  contents. virt-v2v's `-i vmx` parser reads the VMX, finds the VMDKs
+  next to it, and pulls them across the wire.
+- The transport `-it ssh` tells virt-v2v to copy those VMDKs by opening
+  an SSH session to the ESXi host and reading the files with `cat` /
+  `dd`. No VMware libraries required.
+- Output `-o local -os /var/tmp` writes a libvirt domain XML plus
+  converted disk(s) into `/var/tmp` inside the distrobox — same shape
+  as section 5.4.
+
+**Why a vSphere admin would pick this**
+
+- No vCenter licence / vCenter outage / vCenter-less host.
+- VDDK (the official VMware copy library) requires download, EULA, and
+  a matching ESXi/vSphere version — SSH skips all of that.
+- Great for one-off rescues: "this VM has been off in datastore1 for a
+  year, get it to KVM."
+
+**How to prepare the ESXi host**
+
+1. **Enable SSH on the host.** In the vSphere Web Client / Host Client:
+   `Host → Manage → Services → TSM-SSH → Start`. Or from a console
+   shell: `vim-cmd hostsvc/enable_ssh && vim-cmd hostsvc/start_ssh`.
+2. **Open SSH in the ESXi firewall** if it's restricted:
+   `esxcli network firewall ruleset set --ruleset-id=sshServer --enabled=true`.
+3. **Power the VM off** on the source. virt-v2v will refuse a running
+   guest — and you don't want a torn disk image. (Snapshots are fine,
+   but consolidate them first: vSphere Client → VM → Snapshots →
+   *Consolidate*.)
+4. **Locate the VMX path** in the datastore browser, e.g.
+   `[datastore1] WebSrv01/WebSrv01.vmx`. Translate to the absolute path
+   under `/vmfs/volumes/`.
+5. **Stage an SSH key for root@esxi** (the ESXi `root` shell honours
+   `~/.ssh/authorized_keys`). With a password-only host, virt-v2v will
+   prompt; in scripts use `sshpass` or — preferably — drop a key:
+   ```bash
+   ssh-copy-id root@esxi.example.com
+   ```
+
+**How to invoke**
 
 ```bash
-virt-v2v -i vmx -it ssh \
-         ssh://root@esxi.example.com/vmfs/volumes/datastore1/guest/guest.vmx \
-         -o local -os /var/tmp
+distrobox enter fedora-virt -- \
+  virt-v2v -i vmx -it ssh \
+    ssh://root@esxi.example.com/vmfs/volumes/datastore1/WebSrv01/WebSrv01.vmx \
+    -o local -os /var/tmp
 ```
+
+What virt-v2v does next, in order:
+
+1. SSHes in, reads the VMX, enumerates VMDKs.
+2. Streams each VMDK over SSH into an overlay on the conversion host.
+3. Inspects the guest OS, swaps drivers to virtio, removes VMware Tools,
+   rewrites initrd/bootloader as needed.
+4. Writes the final qcow2 disk and a libvirt domain XML into
+   `/var/tmp`.
+
+**Common gotchas**
+
+- *"vmx parser: cannot find disk"* — the VMX references an SE-Sparse
+  or delta VMDK because snapshots weren't consolidated. Consolidate
+  in vSphere first.
+- *Permission denied opening VMDK* — ESXi's `root` shell can read all
+  VMFS files, but a non-root user usually cannot.
+- *Slow copy* — SSH is single-threaded and CPU-bound on the ESXi side.
+  For VMs larger than a few hundred GB, use the vCenter/VDDK path
+  (6.3) which can read concurrently.
 
 ### 6.3 VMware vCenter (VDDK transport) → local libvirt
 
-```bash
-echo 'mypassword' > /tmp/vpw && chmod 600 /tmp/vpw
+This is the path for **production fleets managed by vCenter**. You
+talk to vCenter (not the ESXi host directly), let VMware's own copy
+library (VDDK) do the heavy lifting, and get parallel / SAN-accelerated
+disk reads.
 
-virt-v2v -ic vpx://administrator@vsphere.local@vcenter.example.com/DC/cluster/esxi.example.com \
-         -ip /tmp/vpw \
-         -it vddk -io vddk-libdir=/opt/vmware-vix-disklib-distrib \
-         my-source-guest \
-         -o local -os /var/tmp
+**What is happening**
+
+- `-ic vpx://...` is a *libvirt connection URI* of the form
+  `vpx://<user>@<vcenter-fqdn>/<Datacenter>/<Cluster>/<ESXi-host>`. It
+  tells virt-v2v "go ask vCenter for this VM's metadata." (`vpx` is
+  vSphere-speak for vCenter's API; `esx://` is the equivalent for a
+  standalone ESXi.)
+- The guest name at the end of the command (`my-source-guest`) is the
+  exact VM inventory name as it appears in vCenter — same string you
+  see in the vSphere Client tree.
+- `-it vddk` switches the disk-read transport to the **VMware Virtual
+  Disk Development Kit**: VMware's official C library for reading
+  VMDKs. With it you get NBD/NBDSSL/SAN/HotAdd modes, parallelism,
+  thin-aware reads, and CBT — exactly the same stack VMware's own
+  backup vendors use.
+- `-io vddk-libdir=...` points at the unpacked VDDK distribution on
+  disk. virt-v2v will `dlopen()` `libvixDiskLib.so` from there.
+
+**Why a vSphere admin would pick this**
+
+- vCenter is the source of truth — names, networks, hardware version,
+  snapshots, and folder placement are all there.
+- VDDK pulls disks **much** faster than SSH, especially over 10/25 GbE
+  fabrics or directly from SAN LUNs.
+- vCenter handles auth (SSO, AD, MFA via a service account) — no
+  per-host root credential sprawl.
+- It's the only mode where Changed Block Tracking is meaningful if you
+  later want to redo the conversion against a fresher snapshot.
+
+**How to prepare vCenter / VDDK**
+
+1. **Create (or pick) a service account** with at minimum:
+   - `Virtual machine → Provisioning → Allow read-only disk access`
+   - `Virtual machine → Provisioning → Allow disk access`
+   - `Virtual machine → Provisioning → Allow virtual machine download`
+   - `Virtual machine → Interaction → Power off`
+
+   Grant it on the Datacenter/Cluster/Folder containing the source
+   VMs. (Plain "Read-only" is *not* sufficient — VDDK needs the
+   download privileges.)
+2. **Power the VM off (or take a snapshot)**. virt-v2v will refuse a
+   powered-on guest unless you point it at a snapshot.
+3. **Find the connection URI fragments**:
+   - `Datacenter` — the top-level inventory object in the vSphere
+     Client (left tree).
+   - `Cluster` — the cluster the host belongs to. For a standalone
+     host, use `host` in place of the cluster name.
+   - `ESXi-host` — the FQDN of the host where the VM is currently
+     registered.
+4. **Download and unpack the VDDK** from VMware's developer portal
+   (Broadcom login required). The 8.x release works against modern
+   vCenter:
+   ```bash
+   tar xzf VMware-vix-disklib-8.0.3-23416773.x86_64.tar.gz \
+       -C /opt/   # -> /opt/vmware-vix-disklib-distrib
+   ```
+   Make sure the **VDDK major version matches or exceeds** the
+   vCenter / ESXi major version.
+5. **Stash the password in a file** (virt-v2v refuses passwords on the
+   command line):
+   ```bash
+   printf '%s' 'svc-v2v-password' > /tmp/vpw
+   chmod 600 /tmp/vpw
+   ```
+6. **Verify the thumbprint** (HTTPS pin). virt-v2v will print the
+   expected thumbprint on the first connection — capture it and pass
+   via `-io vddk-thumbprint=AA:BB:...` for unattended runs.
+
+**How to invoke**
+
+```bash
+distrobox enter fedora-virt -- \
+  virt-v2v \
+    -ic 'vpx://svc-v2v@vsphere.local@vcenter.example.com/DC1/Cluster01/esxi-01.example.com?no_verify=1' \
+    -ip /tmp/vpw \
+    -it vddk \
+    -io vddk-libdir=/opt/vmware-vix-disklib-distrib \
+    -io vddk-thumbprint=AA:BB:CC:DD:... \
+    WebSrv01 \
+    -o local -os /var/tmp
 ```
+
+What virt-v2v does next, in order:
+
+1. Authenticates to vCenter, locates `WebSrv01`, reads its OVF/VMX
+   metadata (CPU, RAM, NICs, disks, hardware version, BIOS vs UEFI).
+2. Spins up VDDK in NBD mode against the ESXi host that owns the VM
+   and streams each VMDK into an overlay locally.
+3. Same conversion pass as the SSH path: virtio drivers, Tools
+   removal, bootloader fix-ups, SELinux relabel for Linux guests.
+4. Writes the qcow2 + libvirt domain XML to `/var/tmp`.
+
+**Common gotchas**
+
+- *"VDDK library not found"* — wrong `vddk-libdir` path, or the VDDK
+  tarball was extracted incorrectly. The directory must contain
+  `lib64/libvixDiskLib.so`.
+- *"Permission to perform this operation was denied"* — the service
+  account is missing the "Allow virtual machine download" privilege
+  family.
+- *Hostname mismatch / certificate errors* — append `?no_verify=1` to
+  the URI in lab environments, or import the vCenter CA into the
+  distrobox's trust store for production.
+- *VM not found* — the trailing name is **case-sensitive** and must
+  match the inventory name, not the guest hostname or UUID.
+- *Snapshots present* — virt-v2v will convert the **current** state
+  including delta chains; consolidate first unless you specifically
+  want a point-in-time.
+
+**ESXi-direct alternative**: swap `vpx://` for
+`esx://root@esxi-01.example.com/?no_verify=1` to skip vCenter when the
+host is standalone — VDDK still works.
 
 ### 6.4 OVA appliance → local libvirt
 
