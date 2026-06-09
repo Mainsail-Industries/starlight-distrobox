@@ -16,9 +16,9 @@ by `setup-distrobox.sh --virt`.
 > "virt-v2v converts a single guest from a foreign hypervisor to run on KVM."
 
 It reads a VM from a source (vCenter, ESXi, OVA, VMX, raw/qcow2 disk,
-libvirt XML) and writes a KVM-ready VM to a destination (local libvirt,
-local directory, oVirt/RHV, OpenStack, qemu, KubeVirt, ...). Along the
-way it:
+libvirt XML) and — for Starlight — writes a KVM-ready VM to local
+libvirt: a directory of disk + domain XML, a libvirt storage pool, or a
+ready-to-run `qemu` invocation. Along the way it:
 
 - inspects the guest OS,
 - installs / configures `virtio` drivers (network, block, balloon, rng),
@@ -31,13 +31,12 @@ off.
 
 ## 2. Source / Destination Matrix
 
-The shipped binary on Fedora 43 advertises these modes (from
-`virt-v2v --machine-readable`):
+The shipped binary on Fedora 43 advertises many input/output modes, but
+on Starlight we only use the local-KVM subset:
 
 ```
 input:   disk | libvirt | libvirtxml | ova | vmx
-output:  disk | glance | kubevirt | libvirt | null | openstack
-         | ovirt | ovirt-upload | qemu | vdsm
+output:  disk | libvirt | qemu   (local-only — no oVirt / OpenStack / KubeVirt)
 convert: linux | windows
 transports: ssh (Xen/ESXi), vddk (vCenter)
 ```
@@ -58,7 +57,7 @@ Key flags worth memorising:
 | `-ic <uri>` | libvirt connection URI (`vpx://`, `esx://`, `xen+ssh://`, ...) |
 | `-it ssh\|vddk` | Transport for ESXi-over-SSH or VMware VDDK |
 | `-ip <file>` | File holding the source-side password |
-| `-o disk\|libvirt\|qemu\|openstack\|ovirt-upload\|kubevirt\|...` | Output plug-in |
+| `-o disk\|libvirt\|qemu` | Output plug-in (Starlight uses these only) |
 | `-os <storage>` | Output storage (directory for `-o disk`, pool name for `-o libvirt`, etc.) |
 | `-of qcow2\|raw` | Output disk format |
 | `-on <name>` | Rename the guest |
@@ -391,26 +390,7 @@ virt-v2v -i ova /path/to/appliance.ova \
          -o local -os /var/tmp
 ```
 
-### 6.5 Convert and upload to oVirt / RHV
-
-```bash
-virt-v2v -ic vpx://vcenter.example.com/DC/esxi -ip /tmp/vpw \
-         my-source-guest \
-         -o rhv-upload \
-         -oc https://ovirt-engine.example.com/ovirt-engine/api \
-         -os ovirt-storage-domain \
-         -op /tmp/ovirt_password \
-         -oo rhv-cluster=Default
-```
-
-### 6.6 Convert into OpenStack (Cinder via Glance)
-
-```bash
-virt-v2v -i disk guest.qcow2 \
-         -o openstack -oo server-id=v2v-helper-vm
-```
-
-### 6.7 Convert directly into a libvirt pool
+### 6.5 Convert directly into a libvirt pool
 
 ```bash
 virt-v2v -i disk guest.qcow2 \
@@ -418,14 +398,14 @@ virt-v2v -i disk guest.qcow2 \
          -on imported-guest
 ```
 
-### 6.8 Just produce a bootable qemu command-line
+### 6.6 Just produce a bootable qemu command-line
 
 ```bash
 virt-v2v -i disk guest.qcow2 -o qemu -os /var/tmp
 # Writes /var/tmp/<name>.sh that runs qemu-system-x86_64 directly.
 ```
 
-### 6.9 In-place conversion (no copy)
+### 6.7 In-place conversion (no copy)
 
 ```bash
 virt-v2v-in-place -i disk guest.qcow2          # or
